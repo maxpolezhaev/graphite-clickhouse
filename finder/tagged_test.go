@@ -1,6 +1,7 @@
 package finder
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -18,13 +19,33 @@ func TestTaggedWhere(t *testing.T) {
 
 	table := []struct {
 		query string
+		from  int64
+		until int64
 		where string
 		isErr bool
 	}{
 		// info about _tag "directory"
-		{"seriesByTag('key=value')", "(Tag1='key=value')", false},
-		{"seriesByTag('name=rps')", "(Tag1='__name__=rps')", false},
-		{"seriesByTag('name=rps', 'key=~value')", "(Tag1='__name__=rps') AND (arrayExists((x) -> (x LIKE 'key=%') AND (match(x, 'key=value')), Tags))", false},
+		{
+			"seriesByTag('key=value')",
+			0,
+			0,
+			"(Date >='1970-01-01' AND Date <= '1970-01-01') AND (Tag1='key=value')",
+			false,
+		},
+		{
+			"seriesByTag('name=rps')",
+			0,
+			0,
+			"(Date >='1970-01-01' AND Date <= '1970-01-01') AND (Tag1='__name__=rps')",
+			false,
+		},
+		{
+			"seriesByTag('name=rps', 'key=~value')",
+			0,
+			0,
+			"(Date >='1970-01-01' AND Date <= '1970-01-01') AND (Tag1='__name__=rps') AND (arrayExists((x) -> (x LIKE 'key=%') AND (match(x, 'key=value')), Tags))",
+			false,
+		},
 	}
 
 	for _, test := range table {
@@ -34,7 +55,7 @@ func TestTaggedWhere(t *testing.T) {
 
 		f := NewTagged(srv.URL, "tbl", clickhouse.Options{Timeout: time.Second, ConnectTimeout: time.Second})
 
-		w, err := f.makeWhere(test.query)
+		w, err := f.makeWhere(context.Background(), test.query, test.from, test.until)
 
 		assert.Equal(test.where, w, testName+", where")
 		assert.Equal(test.isErr, err != nil, testName+", where")

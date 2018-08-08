@@ -60,10 +60,12 @@ func (h *Handler) requestExpr(r *http.Request) (string, map[string]bool, error) 
 		return "", usedTags, nil
 	}
 
-	where, err := finder.MakeTaggedWhere(expr)
+	terms, err := finder.ParseTerms(expr)
 	if err != nil {
 		return "", usedTags, err
 	}
+
+	where := finder.MakeTaggedWhere(terms)
 
 	for i := 0; i < len(expr); i++ {
 		a := strings.Split(expr[i], "=")

@@ -104,7 +104,7 @@ func taggedTermWhereN(term *taggedTerm) string {
 	}
 }
 
-func MakeTaggedWhere(expr []string) (string, error) {
+func ParseTerms(expr []string) ([]taggedTerm, error) {
 	terms := make([]taggedTerm, len(expr))
 
 	for i := 0; i < len(expr); i++ {
@@ -112,7 +112,7 @@ func MakeTaggedWhere(expr []string) (string, error) {
 
 		a := strings.SplitN(s, "=", 2)
 		if len(a) != 2 {
-			return "", fmt.Errorf("wrong seriesByTag expr: %#v", s)
+			return []taggedTerm{}, fmt.Errorf("wrong seriesByTag expr: %#v", s)
 		}
 
 		a[0] = strings.TrimSpace(a[0])
@@ -147,12 +147,58 @@ func MakeTaggedWhere(expr []string) (string, error) {
 		case "!=~":
 			terms[i].op = taggedTermNotMatch
 		default:
-			return "", fmt.Errorf("wrong seriesByTag expr: %#v", s)
+			return []taggedTerm{}, fmt.Errorf("wrong seriesByTag expr: %#v", s)
 		}
 	}
 
 	sort.Sort(taggedTermList(terms))
 
+	return terms, nil
+}
+
+func (t *TaggedFinder) swapRarestTerm(ctx context.Context, terms *[]taggedTerm, from int64, until int64) error {
+	var err error
+
+	tagsToCompare := 0
+	tag1Where := NewWhere()
+	for _, term := range *terms {
+		if term.op == taggedTermEq {
+			tag1Where.Or(fmt.Sprintf("Tag1 = '%s=%s'", term.key, term.value))
+			tagsToCompare++
+		}
+	}
+
+	if tagsToCompare < 2 {
+		return nil
+	}
+
+	dateWhere := makeDateWhere(from, until)
+
+	sql := fmt.Sprintf("SELECT Tag1, count() FROM %s WHERE (%s) AND (%s) GROUP BY Tag1 ORDER BY count() LIMIT 1",
+		t.table, dateWhere, tag1Where)
+	body, err := clickhouse.Query(ctx, t.url, sql, t.table, t.opts)
+	if err != nil {
+		return err
+	}
+
+	rows := strings.Split(string(body), "\n")
+	if len(rows) == 0 {
+		return nil
+	}
+	cols := strings.Split(rows[0], "\t")
+	rarestTag := strings.Split(cols[0], "=")[0]
+
+	for i := 1; i < len(*terms); i++ {
+		if (*terms)[i].key == rarestTag {
+			(*terms)[0], (*terms)[i] = (*terms)[i], (*terms)[0]
+			break
+		}
+	}
+
+	return nil
+}
+
+func MakeTaggedWhere(terms []taggedTerm) string {
 	w := NewWhere()
 	w.And(taggedTermWhere1(&terms[0]))
 
@@ -160,10 +206,22 @@ func MakeTaggedWhere(expr []string) (string, error) {
 		w.And(taggedTermWhereN(&terms[i]))
 	}
 
-	return w.String(), nil
+	return w.String()
 }
 
-func (t *TaggedFinder) makeWhere(query string) (string, error) {
+func makeDateWhere(from int64, until int64) string {
+	dateWhere := NewWhere()
+
+	dateWhere.Andf(
+		"Date >='%s' AND Date <= '%s'",
+		time.Unix(from, 0).Format("2006-01-02"),
+		time.Unix(until, 0).Format("2006-01-02"),
+	)
+
+	return dateWhere.String()
+}
+
+func (t *TaggedFinder) makeWhere(ctx context.Context, query string, from int64, until int64) (string, error) {
 	expr, _, err := parser.ParseExpr(query)
 	if err != nil {
 		return "", err
@@ -199,23 +257,30 @@ func (t *TaggedFinder) makeWhere(query string) (string, error) {
 		conditions = append(conditions, s)
 	}
 
-	return MakeTaggedWhere(conditions)
+	terms, err := ParseTerms(conditions)
+	if err != nil {
+		return "", err
+	}
+
+	err = t.swapRarestTerm(ctx, &terms, from, until)
+	if err != nil {
+		return "", err
+	}
+
+	taggedWhere := MakeTaggedWhere(terms)
+
+	dateWhere := makeDateWhere(from, until)
+
+	return fmt.Sprintf("%s AND %s", dateWhere, taggedWhere), nil
 }
 
 func (t *TaggedFinder) Execute(ctx context.Context, query string, from int64, until int64) error {
-	w, err := t.makeWhere(query)
+	w, err := t.makeWhere(ctx, query, from, until)
 	if err != nil {
 		return err
 	}
 
-	dateWhere := NewWhere()
-	dateWhere.Andf(
-		"Date >='%s' AND Date <= '%s'",
-		time.Unix(from, 0).Format("2006-01-02"),
-		time.Unix(until, 0).Format("2006-01-02"),
-	)
-
-	sql := fmt.Sprintf("SELECT Path FROM %s WHERE (%s) AND (%s) GROUP BY Path HAVING argMax(Deleted, Version)==0", t.table, dateWhere.String(), w)
+	sql := fmt.Sprintf("SELECT Path FROM %s WHERE %s GROUP BY Path HAVING argMax(Deleted, Version)==0", t.table, w)
 	t.body, err = clickhouse.Query(ctx, t.url, sql, t.table, t.opts)
 	return err
 }
