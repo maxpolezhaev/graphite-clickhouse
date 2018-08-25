@@ -13,31 +13,40 @@ import (
 	"github.com/lomik/graphite-clickhouse/helper/clickhouse"
 )
 
-type taggedTermOp int
+type TaggedTermOp int
 
 const (
-	taggedTermEq       taggedTermOp = 1
-	taggedTermMatch    taggedTermOp = 2
-	taggedTermNe       taggedTermOp = 3
-	taggedTermNotMatch taggedTermOp = 4
+	TaggedTermEq       TaggedTermOp = 1
+	TaggedTermMatch    TaggedTermOp = 2
+	TaggedTermNe       TaggedTermOp = 3
+	TaggedTermNotMatch TaggedTermOp = 4
 )
 
-type taggedTerm struct {
-	key   string
-	op    taggedTermOp
-	value string
+type TaggedTerm struct {
+	Key   string
+	Op    TaggedTermOp
+	Value string
 }
 
-type taggedTermList []taggedTerm
+type TaggedTermList []TaggedTerm
 
-func (s taggedTermList) Len() int {
+func (s TaggedTermList) Len() int {
 	return len(s)
 }
-func (s taggedTermList) Swap(i, j int) {
+func (s TaggedTermList) Swap(i, j int) {
 	s[i], s[j] = s[j], s[i]
 }
-func (s taggedTermList) Less(i, j int) bool {
-	return s[i].op < s[j].op
+func (s TaggedTermList) Less(i, j int) bool {
+	if s[i].Op < s[j].Op {
+		return true
+	}
+	if s[i].Op > s[j].Op {
+		return false
+	}
+	if s[i].Key == "__name__" && s[j].Key != "__name__" {
+		return true
+	}
+	return false
 }
 
 type TaggedFinder struct {
@@ -55,64 +64,64 @@ func NewTagged(url string, table string, opts clickhouse.Options) *TaggedFinder 
 	}
 }
 
-func taggedTermWhere1(term *taggedTerm) string {
-	switch term.op {
-	case taggedTermEq:
-		return fmt.Sprintf("Tag1=%s", Q(fmt.Sprintf("%s=%s", term.key, term.value)))
-	case taggedTermNe:
-		return fmt.Sprintf("Tag1!=%s", Q(fmt.Sprintf("%s=%s", term.key, term.value)))
-	case taggedTermMatch:
+func TaggedTermWhere1(term *TaggedTerm) string {
+	// positive expression check only in Tag1
+	// negative check in all Tags
+	switch term.Op {
+	case TaggedTermEq:
+		return fmt.Sprintf("Tag1=%s", Qf("%s=%s", term.Key, term.Value))
+	case TaggedTermNe:
+		return fmt.Sprintf("NOT arrayExists((x) -> x=%s, Tags)", Qf("%s=%s", term.Key, term.Value))
+	case TaggedTermMatch:
 		return fmt.Sprintf(
 			"(Tag1 LIKE %s) AND (match(Tag1, %s))",
-			Q(fmt.Sprintf("%s=%%", term.key)),
-			Q(fmt.Sprintf("%s=%s", term.key, term.value)),
+			Qf("%s=%%", term.Key),
+			Qf("%s=%s", term.Key, term.Value),
 		)
-
-	case taggedTermNotMatch:
-		return fmt.Sprintf(
-			"NOT ((Tag1 LIKE %s) AND (match(Tag1, %s)))",
-			Q(fmt.Sprintf("%s=%%", term.key)),
-			Q(fmt.Sprintf("%s=%s", term.key, term.value)),
-		)
-	default:
-		return ""
-	}
-}
-
-func taggedTermWhereN(term *taggedTerm) string {
-	// arrayExists((x) -> %s, Tags)
-	switch term.op {
-	case taggedTermEq:
-		return fmt.Sprintf("arrayExists((x) -> x=%s, Tags)", Q(fmt.Sprintf("%s=%s", term.key, term.value)))
-	case taggedTermNe:
-		return fmt.Sprintf("NOT arrayExists((x) -> x=%s, Tags)", Q(fmt.Sprintf("%s=%s", term.key, term.value)))
-	case taggedTermMatch:
-		return fmt.Sprintf(
-			"arrayExists((x) -> (x LIKE %s) AND (match(x, %s)), Tags)",
-			Q(fmt.Sprintf("%s=%%", term.key)),
-			Q(fmt.Sprintf("%s=%s", term.key, term.value)),
-		)
-
-	case taggedTermNotMatch:
+	case TaggedTermNotMatch:
 		return fmt.Sprintf(
 			"NOT arrayExists((x) -> (x LIKE %s) AND (match(x, %s)), Tags)",
-			Q(fmt.Sprintf("%s=%%", term.key)),
-			Q(fmt.Sprintf("%s=%s", term.key, term.value)),
+			Qf("%s=%%", term.Key),
+			Qf("%s=%s", term.Key, term.Value),
 		)
 	default:
 		return ""
 	}
 }
 
-func ParseTerms(expr []string) ([]taggedTerm, error) {
-	terms := make([]taggedTerm, len(expr))
+func TaggedTermWhereN(term *TaggedTerm) string {
+	// arrayExists((x) -> %s, Tags)
+	switch term.Op {
+	case TaggedTermEq:
+		return fmt.Sprintf("arrayExists((x) -> x=%s, Tags)", Qf("%s=%s", term.Key, term.Value))
+	case TaggedTermNe:
+		return fmt.Sprintf("NOT arrayExists((x) -> x=%s, Tags)", Qf("%s=%s", term.Key, term.Value))
+	case TaggedTermMatch:
+		return fmt.Sprintf(
+			"arrayExists((x) -> (x LIKE %s) AND (match(x, %s)), Tags)",
+			Qf("%s=%%", term.Key),
+			Qf("%s=%s", term.Key, term.Value),
+		)
+	case TaggedTermNotMatch:
+		return fmt.Sprintf(
+			"NOT arrayExists((x) -> (x LIKE %s) AND (match(x, %s)), Tags)",
+			Qf("%s=%%", term.Key),
+			Qf("%s=%s", term.Key, term.Value),
+		)
+	default:
+		return ""
+	}
+}
+
+func ParseTerms(expr []string) ([]TaggedTerm, error) {
+	terms := make([]TaggedTerm, len(expr))
 
 	for i := 0; i < len(expr); i++ {
 		s := expr[i]
 
 		a := strings.SplitN(s, "=", 2)
 		if len(a) != 2 {
-			return []taggedTerm{}, fmt.Errorf("wrong seriesByTag expr: %#v", s)
+			return []TaggedTerm{}, fmt.Errorf("wrong seriesByTag expr: %#v", s)
 		}
 
 		a[0] = strings.TrimSpace(a[0])
@@ -130,33 +139,33 @@ func ParseTerms(expr []string) ([]taggedTerm, error) {
 			a[1] = strings.TrimSpace(a[1][1:])
 		}
 
-		terms[i].key = a[0]
-		terms[i].value = a[1]
+		terms[i].Key = a[0]
+		terms[i].Value = a[1]
 
-		if terms[i].key == "name" {
-			terms[i].key = "__name__"
+		if terms[i].Key == "name" {
+			terms[i].Key = "__name__"
 		}
 
 		switch op {
 		case "=":
-			terms[i].op = taggedTermEq
+			terms[i].Op = TaggedTermEq
 		case "!=":
-			terms[i].op = taggedTermNe
+			terms[i].Op = TaggedTermNe
 		case "=~":
-			terms[i].op = taggedTermMatch
+			terms[i].Op = TaggedTermMatch
 		case "!=~":
-			terms[i].op = taggedTermNotMatch
+			terms[i].Op = TaggedTermNotMatch
 		default:
-			return []taggedTerm{}, fmt.Errorf("wrong seriesByTag expr: %#v", s)
+			return []TaggedTerm{}, fmt.Errorf("wrong seriesByTag expr: %#v", s)
 		}
 	}
 
-	sort.Sort(taggedTermList(terms))
+	sort.Sort(TaggedTermList(terms))
 
 	return terms, nil
 }
 
-func (t *TaggedFinder) swapRarestTerm(ctx context.Context, terms *[]taggedTerm, from int64, until int64) error {
+func (t *TaggedFinder) swapRarestTerm(ctx context.Context, terms *[]TaggedTerm, from int64, until int64) error {
 	var err error
 
 	tagsToCompare := 0
@@ -200,10 +209,10 @@ func (t *TaggedFinder) swapRarestTerm(ctx context.Context, terms *[]taggedTerm, 
 
 func MakeTaggedWhere(terms []taggedTerm) string {
 	w := NewWhere()
-	w.And(taggedTermWhere1(&terms[0]))
+	w.And(TaggedTermWhere1(&terms[0]))
 
 	for i := 1; i < len(terms); i++ {
-		w.And(taggedTermWhereN(&terms[i]))
+		w.And(TaggedTermWhereN(&terms[i]))
 	}
 
 	return w.String()
