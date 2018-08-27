@@ -30,7 +30,7 @@ func Find(config *config.Config, ctx context.Context, query string, from int64, 
 		var f Finder
 
 		if config.ClickHouse.TaggedTable != "" && strings.HasPrefix(strings.TrimSpace(query), "seriesByTag") {
-			f = NewTagged(config.ClickHouse.Url, config.ClickHouse.TaggedTable, opts)
+			f = NewTagged(config.ClickHouse.Url, config.ClickHouse.TaggedTable, opts, config.ClickHouse.TaggedCardinalityQueryLimit)
 
 			if len(config.Common.Blacklist) > 0 {
 				f = WrapBlacklist(f, config.Common.Blacklist)

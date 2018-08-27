@@ -49,20 +49,21 @@ type Common struct {
 }
 
 type ClickHouse struct {
-	Url                  string    `toml:"url"`
-	DataTable            string    `toml:"data-table"`
-	DataTimeout          *Duration `toml:"data-timeout"`
-	TreeTable            string    `toml:"tree-table"`
-	DateTreeTable        string    `toml:"date-tree-table"`
-	DateTreeTableVersion int       `toml:"date-tree-table-version"`
-	TaggedTable          string    `toml:"tagged-table"`
-	TaggedAutocompleDays int       `toml:"tagged-autocomplete-days"`
-	ReverseTreeTable     string    `toml:"reverse-tree-table"`
-	TreeTimeout          *Duration `toml:"tree-timeout"`
-	TagTable             string    `toml:"tag-table"`
-	RollupConf           string    `toml:"rollup-conf"`
-	ExtraPrefix          string    `toml:"extra-prefix"`
-	ConnectTimeout       *Duration `toml:"connect-timeout"`
+	Url                         string    `toml:"url"`
+	DataTable                   string    `toml:"data-table"`
+	DataTimeout                 *Duration `toml:"data-timeout"`
+	TreeTable                   string    `toml:"tree-table"`
+	DateTreeTable               string    `toml:"date-tree-table"`
+	DateTreeTableVersion        int       `toml:"date-tree-table-version"`
+	TaggedTable                 string    `toml:"tagged-table"`
+	TaggedAutocompleDays        int       `toml:"tagged-autocomplete-days"`
+	TaggedCardinalityQueryLimit int       `toml:"tagged-cardinality-query-limit"`
+	ReverseTreeTable            string    `toml:"reverse-tree-table"`
+	TreeTimeout                 *Duration `toml:"tree-timeout"`
+	TagTable                    string    `toml:"tag-table"`
+	RollupConf                  string    `toml:"rollup-conf"`
+	ExtraPrefix                 string    `toml:"extra-prefix"`
+	ConnectTimeout              *Duration `toml:"connect-timeout"`
 }
 
 type Tags struct {
@@ -130,10 +131,11 @@ func New() *Config {
 			TreeTimeout: &Duration{
 				Duration: time.Minute,
 			},
-			RollupConf:           "/etc/graphite-clickhouse/rollup.xml",
-			TagTable:             "",
-			TaggedAutocompleDays: 7,
-			ConnectTimeout:       &Duration{Duration: time.Second},
+			RollupConf:                  "/etc/graphite-clickhouse/rollup.xml",
+			TagTable:                    "",
+			TaggedAutocompleDays:        7,
+			TaggedCardinalityQueryLimit: 100000,
+			ConnectTimeout:              &Duration{Duration: time.Second},
 		},
 		Tags: Tags{
 			Date:  "2016-11-01",

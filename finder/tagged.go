@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,14 +54,16 @@ type TaggedFinder struct {
 	url   string             // clickhouse dsn
 	table string             // graphite_tag table
 	opts  clickhouse.Options // clickhouse query timeout
+	cLim  int                // cardinality query limit
 	body  []byte             // clickhouse response
 }
 
-func NewTagged(url string, table string, opts clickhouse.Options) *TaggedFinder {
+func NewTagged(url string, table string, opts clickhouse.Options, cLim int) *TaggedFinder {
 	return &TaggedFinder{
 		url:   url,
 		table: table,
 		opts:  opts,
+		cLim:  cLim,
 	}
 }
 
@@ -168,46 +171,49 @@ func ParseTerms(expr []string) ([]TaggedTerm, error) {
 func (t *TaggedFinder) swapRarestTerm(ctx context.Context, terms *[]TaggedTerm, from int64, until int64) error {
 	var err error
 
-	tagsToCompare := 0
-	tag1Where := NewWhere()
-	for _, term := range *terms {
-		if term.op == taggedTermEq {
-			tag1Where.Or(fmt.Sprintf("Tag1 = '%s=%s'", term.key, term.value))
-			tagsToCompare++
-		}
-	}
-
-	if tagsToCompare < 2 {
-		return nil
-	}
+	var subQueries []string
 
 	dateWhere := makeDateWhere(from, until)
 
-	sql := fmt.Sprintf("SELECT Tag1, count() FROM %s WHERE (%s) AND (%s) GROUP BY Tag1 ORDER BY count() LIMIT 1",
-		t.table, dateWhere, tag1Where)
+	for i, term := range *terms {
+		tag1Where := TaggedTermWhere1(&term)
+		subQuery := fmt.Sprintf("SELECT %d AS Stmt FROM %s WHERE (%s) AND (%s) LIMIT %d",
+			i, t.table, dateWhere, tag1Where, t.cLim)
+		subQueries = append(subQueries, subQuery)
+	}
+
+	sql := fmt.Sprintf("SELECT Stmt, count() FROM (%s) GROUP BY Stmt ORDER BY count() LIMIT 1",
+		strings.Join(subQueries, " UNION ALL "))
+
 	body, err := clickhouse.Query(ctx, t.url, sql, t.table, t.opts)
 	if err != nil {
 		return err
 	}
 
 	rows := strings.Split(string(body), "\n")
-	if len(rows) == 0 {
+	if len(rows) == 0 || rows[0] == "" {
 		return nil
 	}
 	cols := strings.Split(rows[0], "\t")
-	rarestTag := strings.Split(cols[0], "=")[0]
 
-	for i := 1; i < len(*terms); i++ {
-		if (*terms)[i].key == rarestTag {
-			(*terms)[0], (*terms)[i] = (*terms)[i], (*terms)[0]
-			break
-		}
+	rarestTermIndex, err := strconv.Atoi(cols[0])
+	if err != nil {
+		return err
+	}
+
+	rarestTermCardinality, err := strconv.Atoi(cols[1])
+	if err != nil {
+		return err
+	}
+
+	if rarestTermIndex != 0 && rarestTermCardinality != t.cLim {
+		(*terms)[0], (*terms)[rarestTermIndex] = (*terms)[rarestTermIndex], (*terms)[0]
 	}
 
 	return nil
 }
 
-func MakeTaggedWhere(terms []taggedTerm) string {
+func MakeTaggedWhere(terms []TaggedTerm) string {
 	w := NewWhere()
 	w.And(TaggedTermWhere1(&terms[0]))
 
@@ -271,9 +277,11 @@ func (t *TaggedFinder) makeWhere(ctx context.Context, query string, from int64, 
 		return "", err
 	}
 
-	err = t.swapRarestTerm(ctx, &terms, from, until)
-	if err != nil {
-		return "", err
+	if len(terms) > 1 {
+		err = t.swapRarestTerm(ctx, &terms, from, until)
+		if err != nil {
+			return "", err
+		}
 	}
 
 	taggedWhere := MakeTaggedWhere(terms)

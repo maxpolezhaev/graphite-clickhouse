@@ -53,7 +53,7 @@ func TestTaggedWhere(t *testing.T) {
 
 		srv := clickhouse.NewTestServer()
 
-		f := NewTagged(srv.URL, "tbl", clickhouse.Options{Timeout: time.Second, ConnectTimeout: time.Second})
+		f := NewTagged(srv.URL, "tbl", clickhouse.Options{Timeout: time.Second, ConnectTimeout: time.Second}, 0)
 
 		w, err := f.makeWhere(context.Background(), test.query, test.from, test.until)
 
